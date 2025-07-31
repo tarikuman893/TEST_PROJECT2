@@ -1,20 +1,20 @@
 <?php
 
-namespace App\Console\Commands;
+namespace App\Console\Commands\ImportSales;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Spatie\SimpleExcel\SimpleExcelReader;
 
-class ImportSales extends Command
+class ImportSalesA8 extends Command
 {
-    protected $signature   = 'import:sales';
+    protected $signature   = 'import:sales-a8';
     protected $description = 'A8 など売上 CSV を csv_a8new へ取込む';
 
     public function handle(): int
     {
         /* ---------- 設定 ---------- */
-        $sourceDir   = storage_path('app/csvSales');
+        $sourceDir   = storage_path('app/csvA8/Sales');
         $headers     = ['プログラムID'];
         $csvPattern  = "$sourceDir/*.csv";
 
