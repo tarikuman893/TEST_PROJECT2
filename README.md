@@ -59,3 +59,39 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+## MP CSV 取込処理 — SimpleExcelReader 仕様
+
+### 目的
+MP 売上 CSV を **低メモリ**で読み込み、`csv_mp` テーブルへ取り込みます。
+
+### 使用例
+- SimpleExcelReader::create($tmp)  
+  `$tmp` は、CSV ファイルのパスを指定します。  
+  例: `storage_path('app/tmp/xxxx.csv')`
+- useDelimiter(',')  
+  デフォルトはカンマ区切りですが、必要に応じて変更できます。  
+  例: `useDelimiter(';')`
+- ->noHeader()  
+  ヘッダー行がない場合に使用します。  
+  デフォルトはヘッダー行があると仮定しています。(今回はヘッダーが複数出現する場合を考慮して別ロジックで除外)
+- ->get()  
+  CSV の内容を取得します。
+
+- ->reject(fn ($row) => empty($row) || in_array($row[0] ?? '', $headers, true))  
+  空行やヘッダー行を除外します。  
+  `$headers` は、CSV のヘッダー行を配列で指定します。  
+  例: `$headers = ['ヘッダー1', 'ヘッダー2', ...];`
+
+- ->each(function (array $row) { ... })  
+  各行に対して処理を行います。  
+  `$row` は、CSV の各行を配列として表します。  
+  例: `$row[0]` は1列目、`$row[1]` は2列目の値です。
+
+### 使用ライブラリ
+- **spatie/simple-excel**  
+  GitHub : <https://github.com/spatie/simple-excel>  
+  インストール（未導入の場合）  
+  ```bash
+  composer require spatie/simple-excel
+
