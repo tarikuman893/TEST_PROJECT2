@@ -11,156 +11,141 @@ class ImportMeasureMp extends Command
     protected $signature   = 'import:measure-mp';
     protected $description = 'MP 計測 CSV を measure_mp へ取込む';
 
+    /* ───── ユーティリティ ───── */
+    private static function toDate(?string $v): ?string
+    {
+        $v = trim($v ?? '');
+        if ($v === '' || $v === '0000-00-00 00:00:00') return null;
+        $ts = @strtotime($v);
+        return $ts === false ? null : date('Y-m-d H:i:s', $ts);
+    }
+    private static function toInt(?string $v): int
+    {
+        return (int) str_replace(',', '', $v ?? '0');
+    }
+    /** 税込→税抜（10 % 想定） */
+    private static function net(int $gross): int
+    {
+        return (int) round($gross / 1.1, 0, PHP_ROUND_HALF_UP);
+    }
+
     public function handle(): int
     {
-        $sourceDir  = storage_path('app/csvA8/Measure');
-        $csvPattern = "$sourceDir/mp_measure.csv";
+        $src = storage_path('app/csvA8/Measure/mp_measure.csv');
 
-        // 日付文字列を null に変換
-        $toDate = static function (?string $v): ?string {
-            $v = trim($v ?? '');
-            if ($v === '' || $v === '0000-00-00 00:00:00') {
-                return null;
-            }
-            $ts = @strtotime($v);
-            return $ts === false ? null : date('Y-m-d H:i:s', $ts);
-        };
-
-        // カンマを取り除いて整数化
-        $toInt = static fn (?string $v): int => (int) str_replace(',', '', $v ?? '0');
-
-        foreach (glob($csvPattern) as $csv) {
-            // SJIS→UTF-8（もともと UTF-8 BOM の場合 auto で正しく読み込む）
-            $tmp = tempnam(sys_get_temp_dir(), 'csv_') . '.csv';
-            file_put_contents(
-                $tmp,
-                mb_convert_encoding(file_get_contents($csv), 'UTF-8', 'auto')
-            );
+        foreach (glob($src) as $csv) {
+            /* SJIS→UTF-8 変換（BOM 対応） */
+            $tmp = tempnam(sys_get_temp_dir(), 'mp_') . '.csv';
+            file_put_contents($tmp, mb_convert_encoding(file_get_contents($csv), 'UTF-8', 'auto'));
 
             SimpleExcelReader::create($tmp)
                 ->useDelimiter(',')
                 ->noHeaderRow()
                 ->getRows()
 
-                // --- 除外ロジック（元 CsvMeasureIDImportModel より）---
-                ->reject(function(array $row) {
-                    // 末尾の余分列を削除
-                    array_pop($row);
-                    // 空行・ヘッダー行 ("タイプ") をスキップ
-                    if (empty($row) || strpos($row[0] ?? '', 'タイプ') !== false) {
-                        return true;
-                    }
-                    // MOTA テスト CV 除外
-                    if (($row[4] ?? '') === '2025/05/29 17:59:14') return true;
-                    if (($row[4] ?? '') === '2025/05/28 15:11:56') return true;
-                    // ミシュワン除外
-                    if (($row[3] ?? '') === '2025/07/18 17:00:52') return true;
-                    if (($row[3] ?? '') === '2025/07/18 10:24:42') return true;
-                    if (($row[3] ?? '') === '2025/07/17 17:31:26') return true;
-                    // その他指定日時除外
+                /* ───── 除外 ───── */
+                ->reject(function (array $r): bool {
+                    array_pop($r);                                           // 末尾ダミー 1 列削除
+                    if (empty($r) || strpos($r[0] ?? '', 'タイプ') !== false) return true;
+
+                    if (in_array($r[4] ?? '', ['2025/05/29 17:59:14','2025/05/28 15:11:56'], true)) return true;
+                    if (in_array($r[3] ?? '', ['2025/07/18 17:00:52','2025/07/18 10:24:42','2025/07/17 17:31:26'], true)) return true;
                     foreach ([
                         '2025-07-16 10:23:34','2025-07-15 18:46:10','2025-07-15 08:43:48',
                         '2025-07-15 08:03:19','2025-07-14 17:51:03','2025-07-13 10:24:20',
                         '2025-07-12 23:53:32','2025-07-11 15:03:20','2025-07-09 22:22:37',
                         '2025-07-09 08:14:30','2025-07-07 11:44:08','2025-07-05 20:54:31',
                         '2025-07-05 16:32:07'
-                    ] as $dt) {
-                        if (($row[4] ?? '') === $dt) return true;
-                    }
+                    ] as $ng) if (($r[4] ?? '') === $ng) return true;
+
                     return false;
                 })
 
-                ->each(function(array $row) use ($toDate, $toInt) {
-                    // 余分列を削除
-                    array_pop($row);
+                /* ───── 取込本体 ───── */
+                ->each(function (array $r): void {
 
-                    // --- MeasureID／TCLICKID の抽出 ---
-                    $param = $row[8] ?? '';
-                    // _YCLID_ → _CLID_ → _GCLID_ の順で分割
-                    if (strpos($param, '_YCLID_') !== false) {
-                        $parts = explode('_YCLID_', $param, 2);
-                    } elseif (strpos($param, '_CLID_') !== false) {
-                        $parts = explode('_CLID_', $param, 2);
+                    /* 計測 ID／TCLICK 抽出 */
+                    $p = $r[8] ?? '';
+                    $parts = str_contains($p, '_YCLID_') ? explode('_YCLID_', $p, 2)
+                           : (str_contains($p, '_CLID_') ? explode('_CLID_',  $p, 2)
+                           :                               explode('_GCLID_',  $p, 2));
+
+                    $mid = ''; $tclick = '';
+                    if (!empty($parts[0]) && str_contains($parts[0], '_TCLICK_'))
+                        [$mid, $tclick] = explode('_TCLICK_', $parts[0], 2);
+                    else $mid = $parts[0] ?? '';
+
+                    /* gclid / utm_content */
+                    $gclid = ''; $utm = '';
+                    if (!empty($parts[1]) && str_contains($parts[1], '_UTMC_'))
+                        [$gclid, $utm] = explode('_UTMC_', $parts[1], 2);
+                    else $gclid = $parts[1] ?? '';
+
+                    /* UUID → unknown */
+                    if ($mid !== '' && preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $mid))
+                        $mid = "unknown（{$r[1]}）";
+
+                    /* MOTA 補完 */
+                    if (($r[1] ?? '') === '車査定/株式会社MOTA/MOTA車査定' && ($r[12] ?? '') === 'MOTA_Meta' && $mid === '')
+                        $mid = 'fb_usedcar-1_mota_mp';
+
+                    /* ミシュワン ID 是正 */
+                    if (($r[3] ?? '') === '2025/07/01 14:23:42')
+                        $mid = 'gs_mishone_mp_TCLICK__CjwKZJs…';
+
+                    /* サイト名補正（元ロジック） */
+                    if (($r[12] ?? '') === 'YS_葉酸サプリ-2')                    $r[12] = '葉酸サプリ安心ランキング';
+                    if (in_array($r[12] ?? '', ['ミシュワン_消化LP','ミシュワン_アレルギーLP'], true)) $r[12] = 'ミシュワン_通常';
+                    if (str_contains($p,'gs_dogfood-1_mishone_mp') && ($r[12] ?? '') === 'ミシュワン_通常')
+                        $r[12] = '転職エージェント評判｜-BEST WORK-';
+                    if (str_contains($mid,'ys_dogfood-1')) $r[12] = 'ドッグフード（yahoo）';
+                    if (str_contains($mid,'ys_dogfood-2')) $r[12] = 'ドッグフード（yahoo2）';
+                    if (str_contains($p,'gs_dogfood-2'))    $r[12] .= '（google2）';
+                    if (str_contains($p,'ms_dogfood-1'))
+                        $r[12] = ($r[12]==='ミシュワン_通常'?'ミシュワン_マイクロソフト':$r[12]).'（microsoft）';
+
+                    /* 固定報酬補正（カードローン系） */
+                    $fix = 0;
+                    if (($r[2] ?? '') < '2025-05-20') {
+                        if      (str_contains($mid,'acom'))    $fix = 12000;
+                        elseif  (str_contains($mid,'promise')) $fix = 14000;
+                        elseif  (str_contains($mid,'aiful'))   $fix =  9000;
+                        elseif  (str_contains($mid,'mobit'))   $fix = 14000;
                     } else {
-                        $parts = explode('_GCLID_', $param, 2);
+                        if      (str_contains($mid,'acom'))    $fix = 75000;
+                        elseif  (str_contains($mid,'promise')) $fix = 14000;
+                        elseif  (str_contains($mid,'aiful'))   $fix =  9000;
+                        elseif  (str_contains($mid,'mobit'))   $fix = 14000;
                     }
-                    $measureId = null;
-                    $tclickId  = null;
-                    if (!empty($parts[0]) && strpos($parts[0], '_TCLICK_') !== false) {
-                        [$measureId, $tclickId] = explode('_TCLICK_', $parts[0], 2);
-                    } else {
-                        $measureId = $parts[0] ?? null;
-                    }
+                    if ($fix) $r[2] = (string)$fix;           // 先に固定値へ置換
 
-                    // --- gclid／utm_content の抽出 ---
-                    $gclid = null;
-                    $utmContent = null;
-                    if (!empty($parts[1]) && strpos($parts[1], '_UTMC_') !== false) {
-                        [$gclid, $utmContent] = explode('_UTMC_', $parts[1], 2);
-                    } else {
-                        $gclid = $parts[1] ?? null;
-                    }
+                    /* ===== ここで税抜計算 ===== */
+                    $rewardNet = self::net(self::toInt($r[2] ?? null));
 
-                    // --- MOTA 計測 ID 補完 ---
-                    if (($row[1] ?? '') === '車査定/株式会社MOTA/MOTA車査定'
-                        && ($row[12] ?? '') === 'MOTA_Meta'
-                        && $measureId === null
-                    ) {
-                        $measureId = 'fb_usedcar-1_mota_mp';
-                    }
+                    /* 空 ID 行は無視 */
+                    if ($mid === '') return;
 
-                    // --- ミシュワンの計測ID是正（2025/07/01）---
-                    if (($row[3] ?? '') === '2025/07/01 14:23:42') {
-                        $measureId = 'gs_mishone_mp_TCLICK__CjwKZJs…';
-                    }
+                    /* pg_name = プログラム名 + サイト名（連結・空白なし） */
+                    $pgNameConcat = ($r[1] ?? '') . ($r[12] ?? '');
 
-                    // --- サイト名正規化 ---
-                    // 葉酸サプリ
-                    if (($row[12] ?? '') === 'YS_葉酸サプリ-2') {
-                        $row[12] = '葉酸サプリ安心ランキング';
-                    }
-                    // ミシュワン通常化
-                    if (in_array($row[12] ?? '', ['ミシュワン_消化LP','ミシュワン_アレルギーLP'], true)) {
-                        $row[12] = 'ミシュワン_通常';
-                    }
-                    // ミシュワンリンク変更対応
-                    if (strpos($param, 'gs_dogfood-1_mishone_mp') !== false
-                        && ($row[12] ?? '') === 'ミシュワン_通常'
-                    ) {
-                        $row[12] = '転職エージェント評判｜-BEST WORK-';
-                    }
-                    // ドッグフード流入元別追記
-                    if (strpos($param, 'ys_dogfood-1') !== false) {
-                        $row[12] .= '（yahoo）';
-                    }
-                    if (strpos($param, 'ys_dogfood-2') !== false) {
-                        $row[12] .= '（yahoo2）';
-                    }
-                    if (strpos($param, 'gs_dogfood-2') !== false) {
-                        $row[12] .= '（google2）';
-                    }
-                    if (strpos($param, 'ms_dogfood-1') !== false) {
-                        $row[12] = ($row[12] === 'ミシュワン_通常' ? 'ミシュワン_マイクロソフト' : $row[12]) . '（microsoft）';
-                    }
-
-                    // --- DB 登録 ---
+                    /* INSERT：device=9 / referer=10 / keyword=11 / site_name=12 */
                     DB::table('measure_mp')->insertOrIgnore([
-                        'archive_type'        => $row[0]  ?? null,
-                        'pg_name'             => $row[1]  ?? null,
-                        'reward'              => $toInt($row[2]  ?? null),
-                        'click_time'          => $toDate($row[3]  ?? null),
-                        'occur_time'          => $toDate($row[4]  ?? null),
-                        'fix_time'            => $toDate($row[5]  ?? null),
-                        'fix_time_new_column' => $toDate($row[6]  ?? null),
-                        'statement'           => $row[7]  ?? null,
-                        'user_id'             => $measureId,
-                        'gclid'               => $gclid,
-                        'utm_content'         => $utmContent,
-                        'device'              => $row[15] ?? null,
-                        'referer'             => $row[14] ?? null,
-                        'keyword'             => $row[11] ?? null,
-                        'site_name'           => $row[12] ?? null,
-                        'tclick'              => $tclickId,
+                        'archive_type'        => $r[0]  ?? null,
+                        'pg_name'             => $pgNameConcat !== '' ? $pgNameConcat : null,
+                        'reward'              => $rewardNet,
+                        'click_time'          => self::toDate($r[3]  ?? null),
+                        'occur_time'          => self::toDate($r[4]  ?? null),
+                        'fix_time'            => self::toDate($r[5]  ?? null),
+                        'fix_time_new_column' => self::toDate($r[6]  ?? null),
+                        'statement'           => $r[7]  ?? null,
+                        'user_id'             => $mid,
+                        'gclid'               => $gclid ?: null,
+                        'utm_content'         => $utm   ?: null,
+                        'device'              => $r[9]  ?? null,
+                        'referer'             => $r[10] ?? null,
+                        'keyword'             => $r[11] ?? null,   // ファイルには値なし
+                        'site_name'           => $r[12] ?? null,
+                        'tclick'              => $tclick ?: null,
                     ]);
                 });
 
