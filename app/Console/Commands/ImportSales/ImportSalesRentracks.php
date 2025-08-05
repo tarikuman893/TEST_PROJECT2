@@ -19,16 +19,8 @@ class ImportSalesRentracks extends Command
     private static function toDate(?string $v): ?string
     {
         $v = trim($v ?? '');
-        if ($v === '' || $v === '0000-00-00 00:00:00' || $v === '-') return null;
-
-        // ① 全角／半角スラッシュをハイフンへ統一
-        $v = str_replace(['／', '/'], '-', $v);
-
         // ② “（木）” や “(Wed)” など括弧内の曜日・任意文字を除去
-        $v = preg_replace('/[（(][^0-9]+?[）)]/u', '', $v);
-
-        // ③ 余計な連続空白を 1 つに
-        $v = preg_replace('/\s+/', ' ', $v);
+        $v = preg_replace('/（.*）/', '',  $v);
 
         $ts = @strtotime($v);
         return $ts === false ? null : date('Y-m-d H:i:s', $ts);
