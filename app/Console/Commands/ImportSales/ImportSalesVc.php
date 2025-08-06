@@ -14,12 +14,12 @@ class ImportSalesVc extends Command
     /* ---------- ヘルパ ---------- */
 
     /** class.php と同一：Y/m/d h:m:00 で固定フォーマット化 */
-private static function toDate(?string $v): ?string
-{
-    return ($v !== '−')
-        ? @date('Y/m/d h:m:00', strtotime($v))
-        : null;
-}
+    private static function toDate(?string $v): ?string
+    {
+        return ($v !== '−')
+            ? @date('Y/m/d h:m:00', strtotime($v))
+            : null;
+    }
 
     /** 金額文字列 → 整数（円・税抜き） */
     private static function toInt(?string $v): int
