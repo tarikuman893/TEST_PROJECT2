@@ -6,10 +6,10 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Spatie\SimpleExcel\SimpleExcelReader;
 
-class ImportMeasureFelmat extends Command
+class ImportMeasureHoney extends Command
 {
-    protected $signature   = 'import:measure-felmat';
-    protected $description = 'Felmat 計測 CSV を measure_felmat へ取込む';
+    protected $signature   = 'import:measure-honey';
+    protected $description = 'Honey 計測 CSV を measure_Honey へ取込む';
 
     /* ---------- 共通ヘルパ ---------- */
     private static function toDate(?string $v): ?string
@@ -106,41 +106,33 @@ class ImportMeasureFelmat extends Command
     {
         $measureId = $tclickId = $gclid = $utm = '';
 
-        // ----- ① delimiter 一覧を配列化 -----
-        $delimiters = ['_YCLID_', '_GCLID_', '_CLID_'];
-        $found      = null;
-        foreach ($delimiters as $d) {
-            if (strpos($measureField, $d) !== false) {
-                $found = $d;
-                break;
-            }
-        }
+        if (strpos($measureField, '_YCLID_') !== false || strpos($measureField, '_GCLID_') !== false) {
+            $deli = strpos($measureField, '_YCLID_') !== false ? '_YCLID_' : '_GCLID_';
+            [$left, $right] = explode($deli, $measureField, 2);
 
-        // ----- ② delimiter あり／なしで分岐 -----
-        if ($found !== null) {
-            [$left, $right] = explode($found, $measureField, 2);
             if (strpos($left, '_TCLICK_') !== false) {
                 [$measureId, $tclickId] = explode('_TCLICK_', $left, 2);
             } else {
                 $measureId = $left;
             }
+
             $gclid = $right;
+            if (strpos($gclid, '_UTMC_') !== false) {
+                [$gclid, $utm] = explode('_UTMC_', $gclid, 2);
+            }
         } else {
             $measureId = $measureField;
             if (strpos($measureId, '_TCLICK_') !== false) {
                 [$measureId, $tclickId] = explode('_TCLICK_', $measureId, 2);
             }
-            $gclid = $utmcField;  // param_1 が空の場合はこちら
-        }
-
-        // ----- ③ _UTMC_ 分離 -----
-        if (strpos($gclid, '_UTMC_') !== false) {
-            [$gclid, $utm] = explode('_UTMC_', $gclid, 2);
+            $gclid = $utmcField;
+            if (strpos($gclid, '_UTMC_') !== false) {
+                [$gclid, $utm] = explode('_UTMC_', $gclid, 2);
+            }
         }
         return [$measureId, $tclickId, $gclid, $utm];
     }
-
-
+    
 
     /* ---------- 行フォーマット ---------- */
     private static function formatRow(array $line)
@@ -176,7 +168,7 @@ class ImportMeasureFelmat extends Command
             'os'               => $line[12] ?? null,
             'site_id'          => ($line[13] ?? '') !== '' ? (int) $line[13] : null,
             'site_name'        => $line[14] ?? null,
-            'referer'          => $line[15] ?? null,
+            'referer'          => $line[15] ?? null, 
             'param_1'          => $row[16] ?? null,
             'is_external'      => $line[17] ?? null,
             'search_engine'    => $line[18] ?? null,
