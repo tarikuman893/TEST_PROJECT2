@@ -177,14 +177,14 @@ class ImportMeasureFelmat extends Command
             'site_id'          => ($line[13] ?? '') !== '' ? (int) $line[13] : null,
             'site_name'        => $line[14] ?? null,
             'referer'          => $line[15] ?? null,
-            'param_1'          => $row[16] ?? null,
+            'param_1'          => $line[16] ?? null,
             'is_external'      => $line[17] ?? null,
             'search_engine'    => $line[18] ?? null,
             'search_word'      => $line[19] ?? null,
             'search_lpid'      => $line[20] ?? null,
             'contracted_state' => $line[21] ?? null,
-            'reward_id'        => $row[22] ?? null,
-            'reward_name'      => $row[23] ?? null,
+            'reward_id'        => $line[22] ?? null,
+            'reward_name'      => $line[23] ?? null,
             'tclick'           => $tclickId ?: null,
         ];
     }
